@@ -293,10 +293,11 @@ void TextureTracker::dump_image(TextureUpload &upload, UsedMode &mode) {
 
     uint16_t *palette = nullptr;
     uint32_t palette_hash = 0;
+    Palette p;
     if (mode.mode == TextureMode::Palette4bpp || mode.mode == TextureMode::Palette8bpp) {
         Rect palette_rect(mode.palette_offset_x, mode.palette_offset_y, mode.mode == TextureMode::Palette8bpp ? 256 : 16, 1);
-        Palette p = get_palette(palette_rect);
-        if (p.data != nullptr) {
+         p = get_palette(palette_rect);
+        if (p.hash != 0) {
             palette = p.data;
             suffixs << "-" << std::hex << p.hash;
             palette_hash = p.hash;
@@ -307,7 +308,7 @@ void TextureTracker::dump_image(TextureUpload &upload, UsedMode &mode) {
         dump_log->dump(frame, hash, palette_hash, mode.mode);
     }
 
-    if (palette != nullptr) {
+    if (p.hash != 0) {
         TT_LOG_VERBOSE(RETRO_LOG_INFO, "Dumping palette %i, %i.\n", mode.palette_offset_x, mode.palette_offset_y);
     } else if (mode.mode != TextureMode::ABGR1555) {
         suffixs << "-missing";
@@ -430,17 +431,17 @@ Palette TextureTracker::get_palette(Rect palette_rect) {
 
     static std::unordered_set<RectIndex> overlap;
     for (RectIndex index : tracker.overlapping(palette_rect, overlap)) {
-        EnduringTextureRect &other = tracker.textures[index]; // TODO: The `other.alive` check is unnecessary because tracker.overlapping never returns dead indices
-        if (fromSRect(other.texture_rect.vram_rect).contains(palette_rect) && other.alive) {
-            if (other.texture_rect.offset_x != 0 || other.texture_rect.offset_y != 0) {
-                continue; // TODO: handle offset subrects
-            }
+        EnduringTextureRect &other = tracker.textures[index]; // if palette missed, hash still must exist
+	{
             int x = palette_rect.x - other.texture_rect.vram_rect.x;
             int y = palette_rect.y - other.texture_rect.vram_rect.y;
-            int offset = y * other.texture_rect.vram_rect.width + x;
-            uint16_t *data = other.texture_rect.upload->image.data() + offset;
-            uint32_t hash = crc32(0, (unsigned char*)data, palette_rect.width * sizeof(uint16_t));
-            return { data, hash };
+	    int offset = y * other.texture_rect.vram_rect.width + x;
+                uint16_t *data = other.texture_rect.upload->image.data() + offset;
+                uint32_t hash = crc32(0, (unsigned char*)data, palette_rect.width * sizeof(uint16_t));	//if you have duplicates - maybe you should use offset as hash
+		if (fromSRect(other.texture_rect.vram_rect).contains(palette_rect))
+            		return { data, hash };    // original
+		else 	
+			return { nullptr, hash }; //even if palette null
         }
     }
     return { nullptr, 0 };
@@ -457,7 +458,7 @@ uint32_t TextureTracker::get_palette_hash(Rect palette_rect) {
         cached_palette_hashes.push_back({ palette_rect, palette.hash });
         return palette.hash;
     }
-    return 0; // TODO: better way to indicate no palette found?
+    return palette.hash; // return result anyway
 }
 
 void TextureTracker::clear_palette_cache(Rect rect) {
